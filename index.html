@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Florida Traffic Sim</title>
+<style>
+  :root{--panel:rgba(20,24,30,.74);--hair:rgba(255,255,255,.08);--txt:#eef2f6;--dim:#97a3b1;--acc:#6cc4ff;--bad:#ff7a59}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#5b9647;color:var(--txt);
+    font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-user-select:none;user-select:none}
+  canvas{position:fixed;inset:0;display:block;touch-action:none;cursor:grab}
+  canvas.drag{cursor:grabbing}
+  .panel{position:fixed;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid var(--hair);border-radius:14px}
+  button{background:rgba(255,255,255,.07);color:var(--txt);border:0;border-radius:8px;padding:6px 10px;font:inherit;cursor:pointer;transition:background .15s}
+  button:hover{background:rgba(255,255,255,.14)}
+  button:disabled{opacity:.35;cursor:default}
+  button.on{background:rgba(255,122,89,.28);color:#ffd3c7}
+  .ico{width:30px;height:30px;padding:0;display:grid;place-items:center;font-size:14px}
+  input[type=range]{width:100%;accent-color:var(--acc);margin:0;height:16px}
+  select{width:100%;background:rgba(255,255,255,.07);color:var(--txt);border:0;border-radius:8px;padding:6px 8px;font:inherit}
+  option{background:#1b2028}
+
+  /* status pill */
+  #hud{top:12px;left:12px;display:flex;align-items:center;gap:14px;padding:6px 8px 6px 14px;border-radius:999px}
+  #hud .s b{font-weight:650;font-size:13px;font-variant-numeric:tabular-nums}
+  #hud .s span{color:var(--dim);margin-left:4px}
+  #hud .btns{display:flex;gap:4px;margin-left:2px}
+
+  /* popovers */
+  .pop{display:none;padding:14px;width:250px}
+  .pop.show{display:block}
+  #ctl{top:58px;left:12px}
+  #rules{top:58px;left:12px;width:300px}
+  #rules.show~#ctl{display:none}
+  #ctl .f{margin-top:12px}
+  #ctl .f:first-child{margin-top:0}
+  .lab{display:flex;justify-content:space-between;color:var(--dim);margin-bottom:4px}
+  .lab em{font-style:normal;color:var(--txt);font-variant-numeric:tabular-nums}
+  .chk{display:flex;align-items:center;gap:8px;margin-top:9px;cursor:pointer}
+  .chk input{accent-color:var(--acc);margin:0}
+  .foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--hair);color:var(--dim);display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .foot button{flex:none}
+  #rules ol{margin:0;padding-left:16px}
+  #rules li{margin:5px 0;color:var(--dim)} #rules li b{color:var(--txt);font-weight:600}
+  #rules p{margin:10px 0 0;color:var(--dim)}
+
+  /* inspector */
+  #insp{right:12px;bottom:12px;width:268px;padding:12px 14px;display:none}
+  #insp .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  #insp .top b{font-size:13px}
+  #iState{color:#cfeaff;margin-bottom:10px;min-height:2.8em}
+  #insp .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin-bottom:10px}
+  #insp .kv span{color:var(--dim)} #insp .kv i{font-style:normal;text-align:right;font-variant-numeric:tabular-nums}
+  #insp .acts{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  #insp .acts button{padding:7px 0}
+  #insp .acts2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px}
+  #insp .ag{margin-top:10px}
+
+  #zoom{left:12px;bottom:12px;display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:12px}
+  #hint{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);color:#fff;background:rgba(0,0,0,.4);padding:5px 12px;border-radius:20px;
+    font-size:11px;pointer-events:none;transition:opacity 1s;white-space:nowrap}
+  @media (max-width:820px){#hint{display:none}#hud{gap:8px}#hud .opt{display:none}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="panel">
+  <div class="s"><b id="sCars">–</b><span>cars</span></div>
+  <div class="s"><b id="sAvg">–</b></div>
+  <div class="s opt"><b id="sMov">–</b><span>parked</span></div>
+  <div class="s opt"><b id="sThr">–</b></div>
+  <div class="s opt" id="crashBox" style="display:none"><b id="sCrash" style="color:#ff8a70">0</b><span>crashes</span></div>
+  <div class="btns"><button class="ico" id="ctlT" title="Settings">⚙</button><button class="ico" id="ruleBtn" title="The rules cars follow">?</button></div>
+</div>
+
+<div id="rules" class="panel pop">
+  <ol>
+    <li><b>Keep a safe gap</b> — speed adapts to the car ahead.</li>
+    <li><b>Obey the light</b> — stop on red; on yellow, stop if you comfortably can.</li>
+    <li><b>Reserve your path</b> — enter a junction only if no crossing path is in use.</li>
+    <li><b>Don't block the box</b> — only enter if there's room beyond.</li>
+    <li><b>Right on red</b> after a full stop, when clear.</li>
+    <li><b>Pick the right lane</b> early; change lanes only into safe gaps.</li>
+    <li><b>Merge out of car parks</b> only into a safe gap.</li>
+  </ol>
+  <p>Each car has a random car park, bay and planned route. About 9% of drivers are aggressive (random amount): same rules, smaller gaps. Click a car to inspect it.</p>
+</div>
+
+<div id="ctl" class="panel pop">
+  <div class="f"><select id="size">
+    <option value="6">Small · 6 × 6</option>
+    <option value="10" selected>Large · 10 × 10</option>
+    <option value="16">Metropolis · 16 × 16</option>
+  </select></div>
+  <div class="f"><div class="lab"><span>Cars</span><em id="vCars"></em></div><input id="cars" type="range" min="0" max="2000" step="10"></div>
+  <div class="f"><div class="lab"><span>Speed</span><em id="vSpd"></em></div><input id="spd" type="range" min="0" max="3" step="0.01" value="1"></div>
+  <label class="chk"><input id="rtor" type="checkbox" checked> Right turn on red</label>
+  <label class="chk"><input id="agHi" type="checkbox"> Highlight aggressive drivers</label>
+  <label class="chk"><input id="paths" type="checkbox"> Show junction paths</label>
+  <div class="foot"><span id="sMeta"></span><div style="display:flex;gap:4px"><button id="pause">Pause</button><button id="home">Overview</button></div></div>
+</div>
+
+<div id="insp" class="panel">
+  <div class="top"><b id="iTitle">Car</b><button class="ico" id="iClose" title="Close (Esc)">✕</button></div>
+  <div id="iState"></div>
+  <div class="kv">
+    <span>Speed</span><i id="iSpeed"></i>
+    <span>Driver</span><i id="iDrv"></i>
+    <span>Next</span><i id="iMan"></i>
+    <span>Lane</span><i id="iLane"></i>
+    <span>Going to</span><i id="iDest"></i>
+    <span>Route</span><i id="iRoute"></i>
+    <span>Gap ahead</span><i id="iFollow"></i>
+  </div>
+  <div class="acts">
+    <button id="cLeft" title="Swerve left (← / A)">◀</button>
+    <button id="cHold" title="Brake hard (↓ / S)">■</button>
+    <button id="cBoost" title="Floor it (↑ / W)">▲</button>
+    <button id="cRight" title="Swerve right (→ / D)">▶</button>
+  </div>
+  <div class="acts2">
+    <button id="cIgnore">Run lights</button><button id="cTrip">New trip</button><button id="iFollowBtn">Follow</button>
+  </div>
+  <div class="ag"><div class="lab"><span>Aggression</span><em id="iAgV"></em></div><input id="iAg" type="range" min="0" max="1" step="0.01"></div>
+</div>
+
+<div id="zoom" class="panel"><button class="ico" id="zi">+</button><button class="ico" id="zo">−</button></div>
+<div id="hint">Drag to pan · scroll to zoom · click a car</div>
+
+<script src="sim.js"></script>
+<script>
+(() => {
+'use strict';
+const K = Sim.K;
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
+const $ = id => document.getElementById(id);
+let W = 0, Hh = 0, dpr = 1;
+let world, blocks = [];
+const cam = { x: 0, y: 0, z: 0.5 };
+let fitZoom = 0.4, paused = false, simSpeed = 1, selected = null, follow = false, showPaths = false, agHi = false;
+const pose = { x: 0, y: 0, a: 0 };
+
+/* ------------------------------------------------------------ world / city decor */
+function genBlocks() {
+  const rng = Sim.mulberry32(4242), B = world.B, len = B - 2 * K.H, S = B - 2 * K.ROAD_HALF;
+  const uA = K.ROAD_HALF - K.H + 3, uB = len + K.H - K.ROAD_HALF - 3, vA = K.CURB, vB = K.ROAD_HALF + S - 3;
+  const roofs = ['#c9785d', '#d9a066', '#b9b2a6', '#a6b4c4', '#e0cfa9', '#d8a7a0', '#9fb6a3', '#cfc7b8'];
+  const shopCols = ['#d96f6f', '#e6b34a', '#5aa6c9', '#7bb86f', '#c98ad1'];
+  const pick = a => a[(rng() * a.length) | 0];
+  const palm = (x, y, r) => ({ x, y, r: r || 3 + rng() * 1.5 });
+  for (const b of world.blocks) {
+    b.rects = []; b.circles = []; b.pond = null; b.fake = null;
+    const lot = b.lot; let sv = vA;
+    if (b.type === 0) {            // homes (+ small shops in front of a small car park)
+      b.flat = '#8cb673'; b.ground = '#74ad5a';
+      if (lot) {
+        const w3 = (lot.u1 - lot.u0) / 3;
+        for (let k = 0; k < 3; k++) b.rects.push([lot.u0 + k * w3 + 1, lot.v1 + 3, w3 - 2, 12, shopCols[(rng() * shopCols.length) | 0]]);
+        sv = lot.v1 + 20;
+      }
+      const cols = 6, cs = (uB - uA) / cols, rows = Math.floor((vB - sv) / cs);
+      for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
+        const hu = uA + cx * cs + cs * 0.2 + rng() * 3, hv = sv + cy * cs + cs * 0.18 + rng() * 3;
+        b.rects.push([hu, hv, cs * 0.5, cs * 0.38, pick(roofs)]);
+        b.rects.push([hu + cs * 0.05, hv - cs * 0.2, cs * 0.14, cs * 0.2, '#bdbdb5']);
+        b.circles.push(palm(hu + cs * 0.62, hv + cs * 0.3));
+        if (rng() < 0.4) b.circles.push(palm(hu - 2, hv + cs * 0.5, 2.6));
+      }
+    } else if (b.type === 1) {     // shopping plaza
+      b.flat = '#8f9390'; b.ground = '#6aa04f';
+      if (!lot) b.fake = { u0: 6, u1: len - 6, v1: vA + 50 };
+      const l = lot || b.fake;
+      b.rects.push([uA + 10, l.v1 + 8, uB - uA - 20, Math.min(60, vB - l.v1 - 16), '#e6dfd0']);
+      b.rects.push([uA + 14, l.v1 + 10, (uB - uA) * 0.3, Math.min(56, vB - l.v1 - 20), '#d6cbb5']);
+      for (let k = 0; k < 8; k++) b.circles.push(palm(uA + 8 + k * (uB - uA - 16) / 7, l.v1 + 3.2, 3.4));
+    } else if (b.type === 2) {     // office park
+      b.flat = '#9aa6b4'; b.ground = '#74ad5a';
+      if (!lot) b.fake = { u0: 6, u1: len - 6, v1: vA + 36 };
+      const l = lot || b.fake, hgt = Math.min(60, vB - l.v1 - 20);
+      b.rects.push([uA + 12, l.v1 + 10, (uB - uA) * 0.4, hgt, '#8fa3b8']);
+      b.rects.push([uA + (uB - uA) * 0.55, l.v1 + 10, (uB - uA) * 0.34, hgt, '#a2b3c4']);
+      for (let k = 0; k < 10; k++) b.circles.push(palm(uA + 10 + k * (uB - uA - 20) / 9, l.v1 + 4, 3.2));
+    } else {                       // park with retention pond (+ small car park)
+      b.flat = '#5c9a49'; b.ground = '#5f9d4b';
+      sv = lot ? lot.v1 + 6 : vA;
+      const h = vB - sv;
+      b.pond = [uA + (uB - uA) * (0.3 + rng() * 0.2), sv + h * (0.3 + rng() * 0.3), (uB - uA) * (0.16 + rng() * 0.08), h * (0.12 + rng() * 0.08)];
+      for (let k = 0; k < 40; k++) b.circles.push(palm(uA + 8 + rng() * (uB - uA - 16), sv + 6 + rng() * (h - 12), 3 + rng() * 2));
+    }
+  }
+}
+
+function newWorld(n, keepCars) {
+  const prevCars = world ? world.cars.length / (world.N * world.N) : 12;
+  world = Sim.createWorld({ n, block: 170, seed: (Math.random() * 1e9) | 0, rtor: $('rtor').checked });
+  selected = null; follow = false; $('insp').style.display = 'none';
+  genBlocks();
+  const max = n * n * 22;
+  $('cars').max = max;
+  const want = keepCars ? Math.min(max, Math.round(prevCars * n * n)) : n * n * 12;
+  $('cars').value = want;
+  Sim.setCarCount(world, want);
+  overview(true);
+  lastExits = 0; lastExitT = performance.now();
+}
+function overview(instant) {
+  const span = (world.N - 1) * world.B + 400;
+  fitZoom = Math.min(W / span, Hh / span);
+  cam.x = (world.N - 1) * world.B / 2; cam.y = (world.N - 1) * world.B / 2;
+  cam.z = fitZoom * 1.0; follow = false;
+}
+
+/* ------------------------------------------------------------ rendering */
+const SIG = ['#ff3b3b', '#ffc83b', '#2fe36f'];
+
+function drawRoads(z, vx0, vy0, vx1, vy1) {
+  const N = world.N, B = world.B, R = K.ROAD_HALF, H = K.H;
+  ctx.fillStyle = '#3b3f46';
+  for (const n of world.nodes) {
+    if (n.x < vx0 - B || n.x > vx1 + B || n.y < vy0 - B || n.y > vy1 + B) continue;
+    ctx.fillRect(n.x - R, n.y - R, 2 * R, 2 * R);
+    if (n.i < N - 1) ctx.fillRect(n.x, n.y - R, B, 2 * R);
+    if (n.j < N - 1) ctx.fillRect(n.x - R, n.y, 2 * R, B);
+  }
+  if (z < 0.22) return;
+  // medians
+  ctx.fillStyle = '#9ea39a';
+  for (const n of world.nodes) {
+    if (n.x < vx0 - B || n.x > vx1 + B || n.y < vy0 - B || n.y > vy1 + B) continue;
+    if (n.i < N - 1) ctx.fillRect(n.x + H, n.y - K.MED, B - 2 * H, 2 * K.MED);
+    if (n.j < N - 1) ctx.fillRect(n.x - K.MED, n.y + H, 2 * K.MED, B - 2 * H);
+  }
+  if (z < 0.5) return;
+  // lane lines (per directed edge, on its own side)
+  ctx.lineWidth = Math.max(0.15, 1.2 / z * 0.4);
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.setLineDash([3, 6]);
+  ctx.beginPath();
+  for (const e of world.edges) {
+    const a = e.a, d = e.dir, dx = K.DX[d], dy = K.DY[d];
+    if (a.x < vx0 - B || a.x > vx1 + B || a.y < vy0 - B || a.y > vy1 + B) continue;
+    for (let k = 1; k < K.LANES; k++) {
+      const off = K.MED + k * K.LW;
+      const sx = a.x + dx * H - dy * off, sy = a.y + dy * H + dx * off;
+      ctx.moveTo(sx, sy); ctx.lineTo(sx + dx * e.len, sy + dy * e.len);
+    }
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.beginPath();   // solid edge lines
+  for (const e of world.edges) {
+    const a = e.a, d = e.dir, dx = K.DX[d], dy = K.DY[d];
+    if (a.x < vx0 - B || a.x > vx1 + B || a.y < vy0 - B || a.y > vy1 + B) continue;
+    const off = K.ROAD_HALF - 0.2, sx = a.x + dx * H - dy * off, sy = a.y + dy * H + dx * off;
+    ctx.moveTo(sx, sy); ctx.lineTo(sx + dx * e.len, sy + dy * e.len);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = '#e8b923'; ctx.beginPath();                // yellow median edges
+  for (const n of world.nodes) {
+    if (n.x < vx0 - B || n.x > vx1 + B || n.y < vy0 - B || n.y > vy1 + B) continue;
+    if (n.i < N - 1) for (const s of [-1, 1]) { ctx.moveTo(n.x + H, n.y + s * K.MED); ctx.lineTo(n.x + B - H, n.y + s * K.MED); }
+    if (n.j < N - 1) for (const s of [-1, 1]) { ctx.moveTo(n.x + s * K.MED, n.y + H); ctx.lineTo(n.x + s * K.MED, n.y + B - H); }
+  }
+  ctx.stroke();
+}
+
+function drawCrosswalks(z, vx0, vy0, vx1, vy1) {
+  if (z < 1.1) return;
+  const R = K.ROAD_HALF; ctx.fillStyle = 'rgba(255,255,255,.8)';
+  for (const n of world.nodes) {
+    if (n.x < vx0 - 40 || n.x > vx1 + 40 || n.y < vy0 - 40 || n.y > vy1 + 40) continue;
+    for (let d = 0; d < 4; d++) {
+      if (!n.inE[d] && !n.outE[d]) continue;
+      const dx = K.DX[d], dy = K.DY[d], rx = -dy, ry = dx;
+      const cx = n.x - dx * 13.6, cy = n.y - dy * 13.6;
+      for (let t = -R + 0.8; t < R - 0.6; t += 1.5) {
+        const px = cx + rx * t, py = cy + ry * t;
+        if (dx) ctx.fillRect(px - 1.4, py - 0.35, 2.8, 0.7); else ctx.fillRect(px - 0.35, py - 1.4, 0.7, 2.8);
+      }
+    }
+  }
+}
+
+function drawArrows(z, vx0, vy0, vx1, vy1) {
+  if (z < 2.6) return;
+  ctx.fillStyle = 'rgba(255,255,255,.8)';
+  for (const e of world.edges) {
+    const b = e.b; if (b.x < vx0 - 60 || b.x > vx1 + 60 || b.y < vy0 - 60 || b.y > vy1 + 60) continue;
+    for (const lane of e.lanes) {
+      if (!lane.conns[0].length && !lane.conns[1].length && !lane.conns[2].length) continue;
+      const px = lane.x0 + lane.dx * (lane.len - 9), py = lane.y0 + lane.dy * (lane.len - 9);
+      ctx.save(); ctx.translate(px, py); ctx.rotate(lane.ang);
+      ctx.beginPath();
+      if (lane.k === 0) { ctx.moveTo(-1.6, -0.12); ctx.lineTo(0.2, -0.12); ctx.lineTo(0.2, -1.2); ctx.lineTo(-0.35, -1.2); ctx.lineTo(0.55, -2.4); ctx.lineTo(1.45, -1.2); ctx.lineTo(0.9, -1.2); ctx.lineTo(0.9, 0.12); ctx.lineTo(-1.6, 0.12); }
+      else { ctx.rect(-1.6, -0.14, 2.4, 0.28); ctx.moveTo(0.7, -0.75); ctx.lineTo(1.9, 0); ctx.lineTo(0.7, 0.75); }
+      ctx.fill();
+      if (lane.k === 2 && lane.conns[2].length) { ctx.beginPath(); ctx.rect(0, 0.0, 0.28, 1.1); ctx.moveTo(-0.2, 1.0); ctx.lineTo(0.14, 1.9); ctx.lineTo(0.5, 1.0); ctx.fill(); }
+      ctx.restore();
+    }
+  }
+}
+
+function drawSignals(z, vx0, vy0, vx1, vy1) {
+  const thick = Math.max(0.9, 2.2 / z);
+  for (const n of world.nodes) {
+    if (n.x < vx0 - 40 || n.x > vx1 + 40 || n.y < vy0 - 40 || n.y > vy1 + 40) continue;
+    for (let d = 0; d < 4; d++) {
+      const e = n.inE[d]; if (!e) continue;
+      const dx = K.DX[d], dy = K.DY[d], rx = -dy, ry = dx;
+      const sx = n.x - dx * K.H, sy = n.y - dy * K.H;
+      for (let k = 0; k < K.LANES; k++) {
+        const off = K.laneOff(k), st = Sim.sigState(n, d, k === 0 ? K.L : K.S);
+        ctx.fillStyle = SIG[st];
+        const cx = sx + rx * off, cy = sy + ry * off, w = K.LW * 0.92;
+        if (dx) ctx.fillRect(cx - thick / 2, cy - w / 2, thick, w); else ctx.fillRect(cx - w / 2, cy - thick / 2, w, thick);
+      }
+      if (z > 0.7) {  // lamp heads on a pole at the right kerb
+        const st = Sim.sigState(n, d, K.S), px = sx + rx * (K.ROAD_HALF + 1.4) - dx * 1.5, py = sy + ry * (K.ROAD_HALF + 1.4) - dy * 1.5;
+        ctx.fillStyle = '#15181c'; ctx.beginPath(); ctx.arc(px, py, 1.3, 0, 6.3); ctx.fill();
+        ctx.fillStyle = SIG[st]; ctx.beginPath(); ctx.arc(px, py, 0.8, 0, 6.3); ctx.fill();
+      }
+    }
+  }
+}
+
+function drawPalm(c, fronds) {
+  ctx.fillStyle = '#3e7d36'; ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, 6.3); ctx.fill();
+  if (fronds) {
+    ctx.strokeStyle = '#2f6a2b'; ctx.lineWidth = 0.35; ctx.beginPath();
+    for (let a = 0; a < 6.28; a += 0.9) { ctx.moveTo(c.x, c.y); ctx.lineTo(c.x + Math.cos(a) * c.r, c.y + Math.sin(a) * c.r); }
+    ctx.stroke(); ctx.fillStyle = '#7b5a3a'; ctx.beginPath(); ctx.arc(c.x, c.y, 0.45, 0, 6.3); ctx.fill();
+  }
+}
+function drawBlocks(z, vx0, vy0, vx1, vy1) {
+  for (const b of world.blocks) {
+    if (b.x0 > vx1 || b.x0 + b.s < vx0 || b.y0 > vy1 || b.y0 + b.s < vy0) continue;
+    ctx.fillStyle = '#c9ccc2'; ctx.fillRect(b.x0, b.y0, b.s, b.s);
+    if (z < 0.32) { ctx.fillStyle = b.flat; ctx.fillRect(b.x0 + 3, b.y0 + 3, b.s - 6, b.s - 6); continue; }
+    ctx.fillStyle = b.ground; ctx.fillRect(b.x0 + 3, b.y0 + 3, b.s - 6, b.s - 6);
+    ctx.save(); const t = b.tf; ctx.transform(t[0], t[1], t[2], t[3], t[4], t[5]);      // block-local frame: u along the road, v away from it
+    const L = b.lot || b.fake;
+    if (L) {
+      ctx.fillStyle = '#4a4e55'; ctx.fillRect(L.u0, K.CURB, L.u1 - L.u0, L.v1 - K.CURB);
+      if (b.lot && z > 1.4) {
+        ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 0.18; ctx.beginPath();
+        const ln = b.lot.lines; for (let i = 0; i < ln.length; i += 4) { ctx.moveTo(ln[i], ln[i + 1]); ctx.lineTo(ln[i + 2], ln[i + 3]); }
+        ctx.stroke();
+      }
+    }
+    if (b.pond) { ctx.fillStyle = '#4d9bc0'; ctx.beginPath(); ctx.ellipse(b.pond[0] + b.pond[2], b.pond[1] + b.pond[3], b.pond[2], b.pond[3], 0.3, 0, 6.3); ctx.fill(); }
+    for (const r of b.rects) { ctx.fillStyle = r[4]; ctx.fillRect(r[0], r[1], r[2], r[3]); }
+    const fr = z > 1.3;
+    for (const c of b.circles) drawPalm(c, fr);
+    ctx.restore();
+  }
+}
+
+function drawDrives(z, vx0, vy0, vx1, vy1) {
+  ctx.strokeStyle = '#4a4e55'; ctx.lineWidth = 4.6; ctx.lineCap = 'butt';
+  for (const lot of world.lots) {
+    const n = lot.edge.a; if (n.x < vx0 - 200 || n.x > vx1 + 200 || n.y < vy0 - 200 || n.y > vy1 + 200) continue;
+    for (const d of [lot.inD, lot.outD]) {
+      ctx.beginPath(); ctx.moveTo(d.xs[0], d.ys[0]);
+      for (let i = 4; i < d.xs.length; i += 4) ctx.lineTo(d.xs[i], d.ys[i]);
+      ctx.lineTo(d.xs[d.xs.length - 1], d.ys[d.ys.length - 1]); ctx.stroke();
+    }
+  }
+}
+
+function drawPaths(z, vx0, vy0, vx1, vy1) {
+  ctx.lineWidth = Math.max(0.2, 1 / z);
+  for (const c of world.conns) {
+    const n = c.node; if (n.x < vx0 - 40 || n.x > vx1 + 40 || n.y < vy0 - 40 || n.y > vy1 + 40) continue;
+    ctx.strokeStyle = c.resv > 0 ? 'rgba(255,90,90,.9)' : 'rgba(76,194,255,.45)';
+    ctx.beginPath(); ctx.moveTo(c.xs[0], c.ys[0]);
+    for (let i = 4; i < c.xs.length; i += 4) ctx.lineTo(c.xs[i], c.ys[i]);
+    ctx.lineTo(c.xs[c.xs.length - 1], c.ys[c.ys.length - 1]); ctx.stroke();
+  }
+}
+
+function drawCars(z, vx0, vy0, vx1, vy1) {
+  const cars = world.cars, m = 8, blink = Math.floor(world.time * 2) % 2 === 0;
+  for (let i = 0; i < cars.length; i++) {
+    const c = cars[i]; Sim.carPose(c, pose);
+    if (pose.x < vx0 - m || pose.x > vx1 + m || pose.y < vy0 - m || pose.y > vy1 + m) continue;
+    const hi = agHi && c.ag > 0;
+    if (z < 0.14) { const s = 2.4 / z; ctx.fillStyle = c.crashed ? '#ff3b30' : hi ? '#ff7a2a' : c.color; ctx.fillRect(pose.x - s / 2, pose.y - s / 2, s, s); continue; }
+    let len = c.len, wid = c.wid;
+    if (z < 0.5) { len = Math.max(len, 3.4 / z); wid = Math.max(wid, 1.8 / z); }
+    ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
+    ctx.fillStyle = c.color;
+    if (z > 2.2) { ctx.beginPath(); ctx.roundRect(-len / 2, -wid / 2, len, wid, Math.min(0.7, wid * 0.3)); ctx.fill(); }
+    else ctx.fillRect(-len / 2, -wid / 2, len, wid);
+    if (z > 0.9) {
+      ctx.fillStyle = 'rgba(15,25,35,.78)';
+      ctx.fillRect(len * 0.1, -wid * 0.4, len * 0.2, wid * 0.8);
+      ctx.fillRect(-len * 0.34, -wid * 0.38, len * 0.1, wid * 0.76);
+      ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.fillRect(-len * 0.24, -wid * 0.42, len * 0.34, wid * 0.84);
+    }
+    if (c.crashed) { ctx.fillStyle = 'rgba(20,10,10,.32)'; ctx.fillRect(-len / 2, -wid / 2, len, wid); }
+    if (hi) { ctx.strokeStyle = '#ff7a2a'; ctx.lineWidth = Math.max(0.18, 1.3 / z); ctx.strokeRect(-len / 2, -wid / 2, len, wid); }
+    if (z >= 1.6 && !c.parked) {                                    // small, realistic lamps
+      const braking = c.acc < -0.8 || c.v < 0.3 || c.hold;
+      if (braking && !c.crashed) {
+        ctx.fillStyle = '#e8261f';
+        ctx.fillRect(-len / 2, -wid / 2 + 0.12, 0.28, 0.4); ctx.fillRect(-len / 2, wid / 2 - 0.52, 0.28, 0.4);
+      }
+      let sig = c.sig || 0;
+      if (Math.abs(c.lat) > 0.3) sig = c.lat > 0 ? -1 : 1;
+      const haz = c.crashed || c.hold;
+      if ((sig || haz) && blink) {
+        ctx.fillStyle = '#ffa800';
+        for (const sd of haz ? [-1, 1] : [sig]) {
+          ctx.fillRect(len / 2 - 0.3, sd * (wid / 2 - 0.2) - 0.17, 0.3, 0.34);
+          ctx.fillRect(-len / 2, sd * (wid / 2 - 0.2) - 0.17, 0.3, 0.34);
+        }
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function drawEvents(z) {
+  for (const ev of world.events) {
+    const age = world.time - ev.t; if (age > 3) continue;
+    ctx.strokeStyle = `rgba(255,70,50,${1 - age / 3})`; ctx.lineWidth = Math.max(0.5, 2 / z);
+    ctx.beginPath(); ctx.arc(ev.x, ev.y, Math.max(2.5, 6 / z) + age * Math.max(2.5, 8 / z), 0, 6.3); ctx.stroke();
+  }
+}
+
+function drawSelected(z) {
+  if (!selected) return;
+  const c = selected, t = performance.now() / 1000;
+  Sim.carPose(c, pose);
+  const pts = Sim.routePoints(world, c);
+  if (pts.length) {
+    ctx.lineWidth = Math.max(0.5, 2 / z); ctx.strokeStyle = '#4cc2ff'; ctx.setLineDash([6 / z, 5 / z]);
+    ctx.beginPath(); ctx.moveTo(pose.x, pose.y); for (const q of pts) ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.setLineDash([]);
+    for (let i = 0; i < pts.length - 2; i++) { ctx.fillStyle = 'rgba(76,194,255,.8)'; ctx.beginPath(); ctx.arc(pts[i].x, pts[i].y, Math.max(2, 4 / z), 0, 6.3); ctx.fill(); }
+  }
+  if (c.spot) {
+    const rr = Math.max(9, 24 / z) * (1 + 0.12 * Math.sin(t * 4));
+    ctx.lineWidth = Math.max(0.5, 2 / z); ctx.strokeStyle = '#ffd24a'; ctx.beginPath(); ctx.arc(c.spot.x, c.spot.y, rr, 0, 6.3); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,210,74,.25)'; ctx.fill();
+  }
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(0.4, 1.8 / z);
+  ctx.beginPath(); ctx.arc(pose.x, pose.y, Math.max(c.len * 0.9, 9 / z), 0, 6.3); ctx.stroke();
+}
+
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#5b9647'; ctx.fillRect(0, 0, W, Hh);
+  const z = cam.z;
+  ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (W / 2 - cam.x * z), dpr * (Hh / 2 - cam.y * z));
+  const vx0 = cam.x - W / 2 / z, vx1 = cam.x + W / 2 / z, vy0 = cam.y - Hh / 2 / z, vy1 = cam.y + Hh / 2 / z;
+  drawBlocks(z, vx0, vy0, vx1, vy1);
+  drawRoads(z, vx0, vy0, vx1, vy1);
+  drawDrives(z, vx0, vy0, vx1, vy1);
+  drawCrosswalks(z, vx0, vy0, vx1, vy1);
+  drawArrows(z, vx0, vy0, vx1, vy1);
+  if (showPaths) drawPaths(z, vx0, vy0, vx1, vy1);
+  drawSignals(z, vx0, vy0, vx1, vy1);
+  drawCars(z, vx0, vy0, vx1, vy1);
+  drawEvents(z);
+  drawSelected(z);
+}
+
+/* ------------------------------------------------------------ input */
+function clampCam() {
+  const lim = (world.N - 1) * world.B + 300;
+  cam.x = Math.max(-300, Math.min(lim, cam.x)); cam.y = Math.max(-300, Math.min(lim, cam.y));
+}
+function zoomAt(f, sx, sy) {
+  const nz = Math.max(fitZoom * 0.6, Math.min(14, cam.z * f)); f = nz / cam.z;
+  const wx = cam.x + (sx - W / 2) / cam.z, wy = cam.y + (sy - Hh / 2) / cam.z;
+  cam.z = nz; cam.x = wx - (sx - W / 2) / nz; cam.y = wy - (sy - Hh / 2) / nz; clampCam();
+}
+const ptrs = new Map(); let dragMoved = 0, lastPinch = 0, downAt = null;
+cvs.addEventListener('pointerdown', e => {
+  cvs.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) { dragMoved = 0; downAt = { x: e.clientX, y: e.clientY }; }
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; lastPinch = Math.hypot(a.x - b.x, a.y - b.y); }
+  cvs.classList.add('drag');
+});
+cvs.addEventListener('pointermove', e => {
+  const p = ptrs.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if (ptrs.size === 1) { dragMoved += Math.abs(dx) + Math.abs(dy); cam.x -= dx / cam.z; cam.y -= dy / cam.z; if (dragMoved > 4) follow = false; clampCam(); }
+  else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (lastPinch) zoomAt(d / lastPinch, (a.x + b.x) / 2, (a.y + b.y) / 2); lastPinch = d; dragMoved = 99;
+  }
+});
+function up(e) {
+  if (ptrs.has(e.pointerId) && ptrs.size === 1 && dragMoved < 5 && downAt) pick(e.clientX, e.clientY);
+  ptrs.delete(e.pointerId); lastPinch = 0; if (!ptrs.size) cvs.classList.remove('drag');
+}
+cvs.addEventListener('pointerup', up); cvs.addEventListener('pointercancel', up);
+cvs.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0016)), e.clientX, e.clientY); }, { passive: false });
+function pick(sx, sy) {
+  const wx = cam.x + (sx - W / 2) / cam.z, wy = cam.y + (sy - Hh / 2) / cam.z;
+  const r = Math.max(5, 14 / cam.z); let best = null, bd = r * r;
+  for (const c of world.cars) { Sim.carPose(c, pose); const d = (pose.x - wx) ** 2 + (pose.y - wy) ** 2; if (d < bd) { bd = d; best = c; } }
+  selected = best; follow = false;
+  $('insp').style.display = best ? 'block' : 'none';
+  if (best) { $('hint').style.opacity = 0; if (cam.z < 1.5) { /* gently suggest zoom */ } }
+}
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  else if (e.key === '+' || e.key === '=') zoomAt(1.3, W / 2, Hh / 2);
+  else if (e.key === '-') zoomAt(1 / 1.3, W / 2, Hh / 2);
+  else if (e.key === '0') overview();
+  else if (e.key === 'f' || e.key === 'F') { if (selected) follow = !follow; }
+  else if (selected && (e.key === 'ArrowLeft' || e.key === 'a')) { e.preventDefault(); Sim.cmd(world, selected, 'lane', -1); }
+  else if (selected && (e.key === 'ArrowRight' || e.key === 'd')) { e.preventDefault(); Sim.cmd(world, selected, 'lane', 1); }
+  else if (selected && (e.key === 'ArrowDown' || e.key === 's')) { e.preventDefault(); Sim.cmd(world, selected, 'hold'); }
+  else if (selected && (e.key === 'ArrowUp' || e.key === 'w')) { e.preventDefault(); Sim.cmd(world, selected, 'boost'); }
+  else if (e.key === 'Escape') { selected = null; follow = false; $('insp').style.display = 'none'; }
+});
+
+/* ------------------------------------------------------------ UI wiring */
+function togglePause() { paused = !paused; $('pause').textContent = paused ? 'Resume' : 'Pause'; }
+$('pause').onclick = togglePause;
+$('home').onclick = () => overview();
+$('ctlT').onclick = () => { $('rules').classList.remove('show'); $('ctl').classList.toggle('show'); };
+$('ruleBtn').onclick = () => { $('ctl').classList.remove('show'); $('rules').classList.toggle('show'); };
+$('zi').onclick = () => zoomAt(1.4, W / 2, Hh / 2);
+$('zo').onclick = () => zoomAt(1 / 1.4, W / 2, Hh / 2);
+$('size').onchange = e => newWorld(+e.target.value, true);
+$('cars').oninput = e => { Sim.setCarCount(world, +e.target.value); if (selected && !world.cars.includes(selected)) { selected = null; $('insp').style.display = 'none'; } };
+$('spd').oninput = e => { simSpeed = Math.pow(8, +e.target.value - 1) * (+e.target.value === 0 ? 0 : 1) ; if (+e.target.value === 0) simSpeed = 0; };
+$('rtor').onchange = e => { world.rtor = e.target.checked; };
+$('paths').onchange = e => { showPaths = e.target.checked; };
+$('agHi').onchange = e => { agHi = e.target.checked; };
+const doCmd = (n, a) => { if (selected) Sim.cmd(world, selected, n, a); };
+$('cLeft').onclick = () => doCmd('lane', -1);
+$('cRight').onclick = () => doCmd('lane', 1);
+$('cHold').onclick = () => doCmd('hold');
+$('cBoost').onclick = () => doCmd('boost');
+$('cIgnore').onclick = () => doCmd('ignore');
+$('cTrip').onclick = () => doCmd('newtrip');
+$('iAg').oninput = e => doCmd('ag', +e.target.value);
+$('iClose').onclick = () => { selected = null; follow = false; $('insp').style.display = 'none'; };
+$('iFollowBtn').onclick = () => { follow = !follow; };
+
+const MANS = ['Turn left', 'Go straight', 'Turn right'];
+function updateUI() {
+  const s = Sim.stats(world);
+  $('sCars').textContent = s.n.toLocaleString();
+  $('sAvg').innerHTML = Math.round(s.avg * 2.237) + '<span> mph avg</span>';
+  $('sMov').textContent = s.parked.toLocaleString();
+  $('crashBox').style.display = s.crashes ? '' : 'none'; $('sCrash').textContent = s.crashes;
+  const now = performance.now();
+  if (now - lastExitT > 1500) { exitRate = (world.exits - lastExits) / ((now - lastExitT) / 1000) * 60 / (simSpeed || 1); lastExits = world.exits; lastExitT = now; }
+  $('sThr').innerHTML = Math.round(exitRate).toLocaleString() + '<span>/min</span>';
+  $('vCars').textContent = world.cars.length.toLocaleString();
+  $('vSpd').textContent = simSpeed === 0 ? 'paused' : simSpeed.toFixed(simSpeed < 1 ? 2 : 1) + '×';
+  const mn = Math.floor(world.time / 60), sc = Math.floor(world.time % 60);
+  $('sMeta').textContent = `${mn}:${String(sc).padStart(2, '0')} · ${s.aggressive} aggressive · ${fps} fps`;
+  if (selected) {
+    const c = selected, lot = c.lot, seg = c.seg, onRoad = !c.parked && seg && seg.type <= 1;
+    const ln = seg && seg.type === 0 ? seg : seg && seg.type === 1 ? seg.outLane : null;
+    $('iTitle').textContent = `${c.type} #${c.id}`;
+    $('iState').textContent = c.crashed ? `Crashed — tow in ${Math.max(0, Math.ceil(c.crashT))} s` : c.parked ? `Parked — leaving in ${Math.max(0, Math.ceil(c.parkT))} s` : c.hold ? 'You are holding the brake' : c.ignoreSig && c.st !== 8 ? 'Ignoring lights (your override)' : c.rtor ? Sim.STATE_TEXT[6] : Sim.STATE_TEXT[c.st] || '';
+    $('iSpeed').textContent = Math.round(c.v * 2.237) + ' mph';
+    $('iDrv').textContent = c.ag > 0 ? `Aggressive (${Math.round(c.ag * 100)}%)` : 'Calm';
+    $('iMan').textContent = c.parked ? '–' : c.toLot ? 'Turn into car park' : c.man >= 0 ? MANS[c.man] : '–';
+    $('iLane').textContent = ln ? ['Left-turn lane', 'Middle lane', 'Right lane'][ln.k] : c.parked ? '–' : 'In car park';
+    $('iDest').textContent = lot ? `${lot.label.replace(' car park', '')}, block ${lot.blk.i + 1},${lot.blk.j + 1}` : '–';
+    $('iRoute').textContent = c.parked ? '–' : c.toLot ? 'arriving' : `${c.route.length - c.ri + (c.man >= 0 ? 1 : 0)} turns to go`;
+    $('iFollow').textContent = c.ldGap < 1e8 && !c.parked ? `${Math.max(0, c.ldGap).toFixed(1)} m` : 'clear';
+    $('iFollowBtn').textContent = follow ? 'Unfollow' : 'Follow'; $('iFollowBtn').classList.toggle('on', follow);
+    $('cLeft').disabled = $('cRight').disabled = !(seg && seg.type === 0 && !c.resv && !c.crashed);
+    $('cHold').disabled = $('cBoost').disabled = $('cIgnore').disabled = c.parked || c.crashed;
+    $('cHold').classList.toggle('on', c.hold);
+    $('cIgnore').textContent = c.ignoreSig ? 'Running lights' : 'Run lights'; $('cIgnore').classList.toggle('on', c.ignoreSig);
+    $('cTrip').textContent = c.parked ? 'Leave now' : 'New trip';
+    if (document.activeElement !== $('iAg')) $('iAg').value = c.ag;
+    $('iAgV').textContent = Math.round(c.ag * 100) + '%';
+  }
+}
+let exitRate = 0, lastExits = 0, lastExitT = 0, fps = 60;
+
+/* ------------------------------------------------------------ main loop */
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; Hh = innerHeight;
+  cvs.width = Math.round(W * dpr); cvs.height = Math.round(Hh * dpr);
+  cvs.style.width = W + 'px'; cvs.style.height = Hh + 'px';
+  if (world) { const span = (world.N - 1) * world.B + 400; fitZoom = Math.min(W / span, Hh / span); }
+}
+addEventListener('resize', resize);
+
+let last = performance.now(), uiT = 0, fAcc = 0, fN = 0;
+function frame(t) {
+  let dt = Math.min(0.1, (t - last) / 1000); last = t;
+  fAcc += dt; fN++; if (fAcc > 0.5) { fps = Math.round(fN / fAcc); fAcc = 0; fN = 0; }
+  if (!paused && simSpeed > 0) {
+    const total = dt * simSpeed, n = Math.max(1, Math.ceil(total / 0.05)), h = total / n;
+    for (let i = 0; i < n; i++) Sim.step(world, h);
+  }
+  if (follow && selected) { Sim.carPose(selected, pose); cam.x += (pose.x - cam.x) * Math.min(1, dt * 6); cam.y += (pose.y - cam.y) * Math.min(1, dt * 6); }
+  draw();
+  uiT += dt; if (uiT > 0.2) { uiT = 0; updateUI(); }
+  requestAnimationFrame(frame);
+}
+
+resize();
+newWorld(10, false);
+cam.z = fitZoom * 1.0;
+setTimeout(() => { $('hint').style.opacity = 0; }, 9000);
+requestAnimationFrame(frame);
+
+// small debug handle for poking around in the console
+window.TS = { get world() { return world; }, cam, Sim };
+})();
+</script>
+</body>
+</html>
